@@ -262,102 +262,43 @@ class SDblock(nn.Module):
 
 class SCNet(nn.Module):
     """
-    The implementation of SCNet: Sparse Compression Network for Music Source Separation. Paper: https://arxiv.org/abs/2401.13276.pdf
-
-    Args:
-    - sources (List[str]): List of sources to be separated.
-    - audio_channels (int): Number of audio channels.
-    - nfft (int): Number of FFTs to determine the frequency dimension of the input.
-    - hop_size (int): Hop size for the STFT.
-    - win_size (int): Window size for STFT.
-    - normalized (bool): Whether to normalize the STFT.
-    - dims (List[int]): List of channel dimensions for each block.
-    - band_SR (List[float]): The proportion of each frequency band.
-    - band_stride (List[int]): The down-sampling ratio of each frequency band.
-    - band_kernel (List[int]): The kernel sizes for down-sampling convolution in each frequency band
-    - conv_depths (List[int]): List specifying the number of convolution modules in each SD block.
-    - compress (int): Compression factor for convolution module.
-    - conv_kernel (int): Kernel size for convolution layer in convolution module.
-    - num_dplayer (int): Number of dual-path layers.
-    - expand (int): Expansion factor in the dual-path RNN, default is 1.
-
+    The implementation of SCNet: Sparse Compression Network for Music Source Separation.
+    Paper: https://arxiv.org/abs/2401.13276.pdf
     """
 
     def __init__(
         self,
         sources=["drums", "bass", "other", "vocals"],
         audio_channels=2,
-        # Main structure
-        dims=[4, 32, 64, 128],  # dims = [4, 64, 128, 256] in SCNet-large
-        # STFT
-        nfft=4096,
-        hop_size=1024,
-        win_size=4096,
-        normalized=True,
-        # SD/SU layer
-        band_SR=[0.175, 0.392, 0.433],
-        band_stride=[1, 4, 16],
-        band_kernel=[3, 4, 16],
-        # Convolution Module
+        dims: list[int] = [4, 32, 64, 128],
+        stft_config=dict(nfft=4096, hop_length=1024, win_size=4096, normalized=True),
+        band_config=None,
         conv_depths=[3, 2, 1],
-        compress=4,
-        conv_kernel=3,
-        # Dual-path RNN
+        conv_config=dict(compress=4, kernel=3),
         num_dplayer=6,
         expand=1,
     ):
         super().__init__()
         self.sources = sources
         self.audio_channels = audio_channels
-        self.dims = dims
-        band_keys = ["low", "mid", "high"]
-        self.band_configs = {
-            band_keys[i]: {
-                "SR": band_SR[i],
-                "stride": band_stride[i],
-                "kernel": band_kernel[i],
-            }
-            for i in range(len(band_keys))
-        }
-        self.hop_length = hop_size
-        self.conv_config = {
-            "compress": compress,
-            "kernel": conv_kernel,
+        self.conv_config = conv_config
+        
+        self.band_config = band_config if band_config else {
+            "low": dict(SR=0.175, stride=1, kernel=3),
+            "mid": dict(SR=0.392, stride=4, kernel=4),
+            "high": dict(SR=0.433, stride=16, kernel=16),
         }
 
         self.stft_config = {
-            "n_fft": nfft,
-            "hop_length": hop_size,
-            "win_length": win_size,
+            **stft_config,
             "center": True,
-            "normalized": normalized,
-            # "window": torch.hamming_window(win_size).cuda()
+            # "window": torch.hamming_window(stft_config["win_length"]).cuda(),
         }
 
-        self.encoder = nn.ModuleList()
-        self.decoder = nn.ModuleList()
-
-        for index in range(len(dims) - 1):
-            enc = SDblock(
-                channels_in=dims[index],
-                channels_out=dims[index + 1],
-                band_configs=self.band_configs,
-                conv_config=self.conv_config,
-                depths=conv_depths,
-            )
-            self.encoder.append(enc)
-
-            dec = nn.Sequential(
-                FusionLayer(channels=dims[index + 1]),
-                SUlayer(
-                    channels_in=dims[index + 1],
-                    channels_out=(
-                        dims[index] if index != 0 else dims[index] * len(sources)
-                    ),
-                    band_configs=self.band_configs,
-                ),
-            )
-            self.decoder.insert(0, dec)
+        self.dims = dims.copy()
+        self.encoder = Encoder(dims, self.band_config, self.conv_config, conv_depths)
+        dims[0] *= len(sources)
+        self.decoder = Decoder(dims, self.band_config)
 
         self.separation_net = SeparationNet(
             channels=dims[-1],
@@ -368,11 +309,14 @@ class SCNet(nn.Module):
     def forward(self, x):
         # B, C, L = x.shape
         B = x.shape[0]
-        # In the initial padding, ensure that the number of frames after the STFT (the length of the T dimension) is even,
-        # so that the RFFT operation can be used in the separation network.
-        padding = self.hop_length - x.shape[-1] % self.hop_length
-        if (x.shape[-1] + padding) // self.hop_length % 2 == 0:
-            padding += self.hop_length
+        # In the initial padding, ensure that the number of frames after the STFT
+        # (the length of the T dimension) is even, so that the RFFT operation can be
+        # used in the separation network.
+
+        hop_length = self.stft_config["hop_length"]
+        padding = hop_length - x.shape[-1] % hop_length
+        if (x.shape[-1] + padding) // hop_length % 2 == 0:
+            padding += hop_length
         x = F.pad(x, (0, padding))
 
         # STFT
@@ -392,23 +336,9 @@ class SCNet(nn.Module):
         std = x.std(dim=(1, 2, 3), keepdim=True)
         x = (x - mean) / (1e-5 + std)
 
-        save_skip = deque()
-        save_lengths = deque()
-        save_original_lengths = deque()
-        # encoder
-        for sd_layer in self.encoder:
-            x, skip, lengths, original_lengths = sd_layer(x)
-            save_skip.append(skip)
-            save_lengths.append(lengths)
-            save_original_lengths.append(original_lengths)
-
-        # separation
+        x, skips, lengths, original_lengths = self.encoder(x)
         x = self.separation_net(x)
-
-        # decoder
-        for fusion_layer, su_layer in self.decoder:
-            x = fusion_layer(x, save_skip.pop())
-            x = su_layer(x, save_lengths.pop(), save_original_lengths.pop())
+        x = self.decoder(x, skips, lengths, original_lengths)
 
         # output
         n = self.dims[0]
@@ -421,4 +351,70 @@ class SCNet(nn.Module):
 
         x = x[:, :, :, :-padding]
 
+        return x
+
+
+class Encoder(nn.ModuleList):
+    def __init__(
+            self,
+            dims: list[int],
+            band_configs: dict,
+            conv_config: dict,
+            conv_depths: list[int],
+    ):
+        super().__init__(
+            SDblock(c_in, c_out, band_configs, conv_config, conv_depths)
+            for c_in, c_out in zip(dims, dims[1:])
+        )
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list, list, list]:
+        skips = []
+        lengths = []
+        original_lengths = []
+
+        for sd_block in self:
+            x, S, L, OL = sd_block(x)
+            skips.append(S)
+            lengths.append(L)
+            original_lengths.append(OL)
+        
+        return x, skips, lengths, original_lengths
+
+
+class DecoderBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        band_configs,
+    ):
+        super().__init__()
+        self.fusion_layer = FusionLayer(in_channels)
+        self.su_layer = SUlayer(in_channels, out_channels, band_configs)
+
+    def forward(self, x, skip, length, original_length):
+        x = self.fusion_layer(x, skip)
+        x = self.su_layer(x, length, original_length)
+        return x
+        
+
+class Decoder(nn.ModuleList):
+    
+    def __init__(
+        self,
+        dims: list[int],
+        band_configs: dict,
+    ):
+        super().__init__(
+            DecoderBlock(c_in, c_out, band_configs)
+            for c_in, c_out in zip(reversed(dims), dims[-2::-1])
+        )
+    
+    def forward(self, x: torch.Tensor, skips: list, lengths: list, original_lengths: list):
+        for decoder_block in self:
+            skip = skips.pop()
+            length = lengths.pop()
+            original_length = original_lengths.pop()
+            x = decoder_block(x, skip, length, original_length)
+        
         return x
