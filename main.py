@@ -19,7 +19,13 @@ def main():
     config = OmegaConf.load(args.config)
 
     torch.set_float32_matmul_precision("high")
-    model = SCNetLightning(config.model, config.optim, config.data, config.augment)
+    model = SCNetLightning(
+        config.model,
+        config.optim,
+        config.data,
+        config.augment,
+        config.inference,
+    )
 
     datamodule = WavModule(config.data, config.loader)
 

@@ -23,20 +23,36 @@ loader:
         shuffle: False
         num_workers: 15
 
+inference:
+    overlap: 0.2
+    max_parallel_windows: null
+
 model:
     sources: ${data.sources}
     audio_channels: ${data.channels}
     dims: [4, 32, 64, 128]
-    nfft: 4096
-    hop_size: 1024
-    win_size: 4096
-    normalized: True
-    band_SR: [0.175, 0.392, 0.433]
-    band_stride: [1, 4, 16]
-    band_kernel: [3, 4, 16]
+    stft_config:
+        n_fft: 4096
+        hop_length: 1024
+        win_length: 4096
+        normalized: True
+    band_config:
+        low:
+            SR: 0.175
+            stride: 1
+            kernel: 3
+        mid:
+            SR: 0.392
+            stride: 4
+            kernel: 4
+        high:
+            SR: 0.433
+            stride: 16
+            kernel: 16
     conv_depths: [3, 2, 1]
-    compress: 4
-    conv_kernel: 3
+    conv_config:
+        compress: 4
+        kernel: 3
     num_dplayer: 6
     expand: 1
 
