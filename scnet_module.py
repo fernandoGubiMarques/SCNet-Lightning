@@ -49,7 +49,7 @@ class SCNetLightning(LightningModule):
                 augments.append(getattr(augment, aug.capitalize())(**kw))
         self.augment = torch.nn.Sequential(*augments)
 
-        self.inference_overlap = 0.3
+        self.inference_overlap = 0.2
 
     def forward(self, mix):
         """Forward pass through the SCNet model."""
