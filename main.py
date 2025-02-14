@@ -25,6 +25,7 @@ def main():
         config.data,
         config.augment,
         config.inference,
+        config.train
     )
 
     datamodule = WavModule(config.data, config.loader)

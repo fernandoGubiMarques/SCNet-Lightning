@@ -6,6 +6,7 @@ from scnet.utils import new_sdr
 from scnet import augment
 from scnet.SCNet import SCNet
 from omegaconf import DictConfig
+import einops
 
 
 class SCNetLightning(LightningModule):
@@ -16,6 +17,7 @@ class SCNetLightning(LightningModule):
         data_config: DictConfig,
         augment_config: DictConfig,
         inference_config: DictConfig,
+        train_config: DictConfig,
     ):
         super().__init__()
         self.model = SCNet(**model_config)
@@ -25,6 +27,7 @@ class SCNetLightning(LightningModule):
         self.window_size = data_config["samplerate"] * data_config["segment"]
         self.model_config = model_config
         self.inference_config = inference_config
+        self.train_config = train_config
 
         # STFT configuration for spectral loss computation
         stft_config = model_config["stft_config"]
@@ -51,6 +54,10 @@ class SCNetLightning(LightningModule):
 
         self.window_weights = torch.hamming_window(self.window_size)
 
+        assert len(train_config.loss_weights) == len(model_config.sources)
+        self.loss_weights = torch.asarray(train_config.loss_weights).cuda()
+        self.loss_weights /= self.loss_weights.sum()
+
     def forward(self, mix):
         """Forward pass through the SCNet model."""
         return self.model(mix)
@@ -74,36 +81,44 @@ class SCNetLightning(LightningModule):
 
         return loss
 
-    def spec_rmse_loss(self, estimate, sources):
+    def spec_rmse_loss(self, estimates: Tensor, sources: Tensor):
         """
         Compute the RMSE loss in the spectrogram domain for each signal separately
         and allow weighting of different signals.
 
         Args:
-            estimate (torch.Tensor): Estimated audio signals of shape (batch, signal, channel, time).
+            estimates (torch.Tensor): Estimated audio signals of shape (batch, signal, channel, time).
             sources (torch.Tensor): Ground truth audio signals of the same shape.
 
         Returns:
             torch.Tensor: RMSE loss.
         """
-        _, _, _, lenc = estimate.shape
-        spec_estimate = estimate.view(-1, lenc)
-        spec_sources = sources.view(-1, lenc)
+        B, S, C, T = estimates.shape
 
-        spec_estimate = torch.stft(spec_estimate, **self.stft_config, return_complex=True)
-        spec_sources = torch.stft(spec_sources, **self.stft_config, return_complex=True)
+        estimates = einops.rearrange(estimate, "B S C T -> S (B C) T")
+        sources = einops.rearrange(sources, "B S C T -> S (B C) T")
 
-        spec_estimate = torch.view_as_real(spec_estimate)
-        spec_sources = torch.view_as_real(spec_sources)
+        loss = 0
 
-        new_shape = estimate.shape[:-1] + spec_estimate.shape[-3:]
-        spec_estimate = spec_estimate.view(*new_shape)
-        spec_sources = spec_sources.view(*new_shape)
+        for weight, estimate, source in zip(self.loss_weights, estimates, sources):
+            # estimate and source have shape (B*C, T)
+            
+            estimate = torch.stft(estimate, **self.stft_config, return_complex=True)
+            source = torch.stft(source, self.stft_config, return_complex=True)
+            # (B*C, f, t), t is not T
 
-        loss = F.mse_loss(spec_estimate, spec_sources, reduction='none')
+            estimate = torch.view_as_real(estimate)
+            source = torch.view_as_real(source)
+            # (B*C, f, t, 2)
 
-        dims = tuple(range(2, loss.dim()))
-        loss = loss.mean(dims).sqrt().mean(dim=(0, 1))  
+            estimate = einops.rearrange(estimate, "(B C) f t 2 -> B (C f t 2)", B=B, C=C)
+            source = einops.rearrange(source, "(B C) f t 2 -> B (C f t 2)", B=B, C=C)
+
+            signal_loss = F.mse_loss(estimate, source, reduction="none")
+            # (B, C*f*t*2)
+
+            signal_loss = signal_loss.mean(1).sqrt().mean(0)
+            loss += weight * signal_loss
 
         return loss
 
