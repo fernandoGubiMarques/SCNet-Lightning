@@ -55,7 +55,7 @@ class SCNetLightning(LightningModule):
         self.window_weights = torch.hamming_window(self.window_size)
 
         assert len(train_config.loss_weights) == len(model_config.sources)
-        self.loss_weights = torch.asarray(train_config.loss_weights).cuda()
+        self.loss_weights = torch.asarray(train_config.loss_weights).float().cuda()
         self.loss_weights /= self.loss_weights.sum()
 
     def forward(self, mix):
@@ -95,7 +95,7 @@ class SCNetLightning(LightningModule):
         """
         B, S, C, T = estimates.shape
 
-        estimates = einops.rearrange(estimate, "B S C T -> S (B C) T")
+        estimates = einops.rearrange(estimates, "B S C T -> S (B C) T")
         sources = einops.rearrange(sources, "B S C T -> S (B C) T")
 
         loss = 0
@@ -104,15 +104,15 @@ class SCNetLightning(LightningModule):
             # estimate and source have shape (B*C, T)
             
             estimate = torch.stft(estimate, **self.stft_config, return_complex=True)
-            source = torch.stft(source, self.stft_config, return_complex=True)
+            source = torch.stft(source, **self.stft_config, return_complex=True)
             # (B*C, f, t), t is not T
 
             estimate = torch.view_as_real(estimate)
             source = torch.view_as_real(source)
             # (B*C, f, t, 2)
 
-            estimate = einops.rearrange(estimate, "(B C) f t 2 -> B (C f t 2)", B=B, C=C)
-            source = einops.rearrange(source, "(B C) f t 2 -> B (C f t 2)", B=B, C=C)
+            estimate = einops.rearrange(estimate, "(B C) f t c -> B (C f t c)", B=B, C=C)
+            source = einops.rearrange(source, "(B C) f t c -> B (C f t c)", B=B, C=C)
 
             signal_loss = F.mse_loss(estimate, source, reduction="none")
             # (B, C*f*t*2)
