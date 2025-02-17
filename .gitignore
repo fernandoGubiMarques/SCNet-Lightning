@@ -176,3 +176,4 @@ cython_debug/
 *.sh
 *.ipynb
 logs/
+slurm/
