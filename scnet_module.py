@@ -123,7 +123,7 @@ class SCNetLightning(LightningModule):
         return loss
 
     @torch.no_grad
-    def apply_model(self, x: Tensor, mean: Tensor, std: Tensor):
+    def apply_model(self, x: Tensor):
         """Applies the model in a windowed fashion with overlap handling."""
 
         n_sources = len(self.model_config["sources"])
@@ -184,7 +184,7 @@ class SCNetLightning(LightningModule):
         # Add back batch dimension -> (1, n_sources, 2, T)
         output = output.unsqueeze(0)
 
-        return output * std + mean
+        return output
 
     def validation_step(self, batch: tuple[Tensor, Tensor, Tensor], batch_idx):
         """Validation step: evaluates model performance using NSDR metric."""
@@ -198,6 +198,7 @@ class SCNetLightning(LightningModule):
         # Apply model with overlap
         mix = (mix - mean) / std
         estimate = self.apply_model(mix, mean, std)
+        estimate = estimate * std + mean
 
         # Compute NSDR for each source
         nsdrs = new_sdr(sources, estimate.detach()).mean(0)
@@ -225,6 +226,7 @@ class SCNetLightning(LightningModule):
         # Apply model with overlap
         mix = (mix - mean) / std
         estimate = self.apply_model(mix, mean, std)
+        estimate = estimate * std + mean
 
         # Compute NSDR for each source
         nsdrs = new_sdr(sources, estimate.detach()).mean(0)
