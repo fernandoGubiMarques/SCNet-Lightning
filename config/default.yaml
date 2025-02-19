@@ -4,24 +4,10 @@ optim:
     weight_decay: 0
 
 data:
-    root: "/home/users/fgm/workspace/data/musdb18hq"
-    samplerate: 44100
+    partition_path: "config/data/musdb18hq.yaml"
     segment: 11
-    shift: 1
-    channels: 2
-    normalize: True
-    metadata: "./metadata"
-    sources: ["drums", "bass", "other", "vocals"]
-
-loader:
-    train:
-        batch_size: 8
-        shuffle: True
-        num_workers: 15
-    val:
-        batch_size: 1
-        shuffle: False
-        num_workers: 15
+    stride: 1
+    stems: ["drums", "bass", "vocals"]
 
 inference:
     overlap: 0.2
@@ -31,7 +17,7 @@ train:
     loss_weights: [1, 1, 1, 1]
 
 model:
-    sources: ${data.sources}
+    sources: ${data.stems}
     audio_channels: ${data.channels}
     dims: [4, 32, 64, 128]
     stft_config:

@@ -28,7 +28,7 @@ def main():
         config.train
     )
 
-    datamodule = WavModule(config.data, config.loader)
+    datamodule = WavModule(**config.data)
 
     logger = CSVLogger("./logs", "SCNet")
     log_dir = Path(logger.log_dir)
