@@ -63,8 +63,8 @@ class Wavset(Dataset):
                 audio.append(stem_audio.to(self.device))
             
             audio = sum(audio)
-            mean = audio.mean()
-            std = audio.std()
+            mean = audio.mean().cpu().item()
+            std = audio.std().cpu().item()
             
             audio_len = audio.shape[-1]
             if self.segment_samples > 0 and audio_len >= self.segment_samples:
