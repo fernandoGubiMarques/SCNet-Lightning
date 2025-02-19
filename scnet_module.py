@@ -197,7 +197,7 @@ class SCNetLightning(LightningModule):
 
         # Apply model with overlap
         mix = (mix - mean) / std
-        estimate = self.apply_model(mix, mean, std)
+        estimate = self.apply_model(mix)
         estimate = estimate * std + mean
 
         # Compute NSDR for each source
@@ -225,7 +225,7 @@ class SCNetLightning(LightningModule):
 
         # Apply model with overlap
         mix = (mix - mean) / std
-        estimate = self.apply_model(mix, mean, std)
+        estimate = self.apply_model(mix)
         estimate = estimate * std + mean
 
         # Compute NSDR for each source
