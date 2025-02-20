@@ -1,8 +1,24 @@
-from scnet.wav import build_metadata, Wavset
+from scnet.wav import Wavset
 import lightning as L
 from pathlib import Path
 import json
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset
+
+class WavTransform(Dataset):
+
+    def __init__(self, path, metadata):
+        self.wavset = Wavset(path, metadata, ["mixture"], 11, 1, True)
+
+        self.transform1 = ...
+        self.transform2 = ...
+
+    def __len__(self):
+        return len(self.wavset)
+    
+    def __getitem__(self, index):
+        audio = self.wavset[index]
+        return self.transform1(audio), self.transform2(audio)
+
 
 
 class WavMixtureModule(L.LightningDataModule):
@@ -37,7 +53,7 @@ class WavMixtureModule(L.LightningDataModule):
             train_metadata, _, _ = json.load(f)
 
         # Initialize datasets
-        self.train_set = Wavset(train_path, train_metadata, ["mixture"], 11, 1, True)
+        self.train_set = WavTransform(train_path, train_metadata)
         
 
     def train_dataloader(self):
