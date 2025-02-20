@@ -4,7 +4,7 @@ from torch import Tensor
 from lightning import LightningModule
 from scnet.utils import new_sdr
 from scnet import augment
-from scnet.SCNet import SCNet
+from half_scnet import SCNet_Backbone, SCNet_Head
 from omegaconf import DictConfig
 import einops
 
@@ -20,7 +20,8 @@ class SCNetLightning(LightningModule):
         train_config: DictConfig,
     ):
         super().__init__()
-        self.model = SCNet(**model_config)
+        self.backbone = SCNet_Backbone(**model_config)
+        self.head = SCNet_Head(**model_config)
         self.optimizer = torch.optim.Adam(self.model.parameters(), **optim_config)
 
         # Compute the window size in samples
@@ -60,7 +61,7 @@ class SCNetLightning(LightningModule):
 
     def forward(self, mix):
         """Forward pass through the SCNet model."""
-        return self.model(mix)
+        return self.head(self.backbone(mix))
 
     def configure_optimizers(self):
         """Returns the optimizer for training."""
