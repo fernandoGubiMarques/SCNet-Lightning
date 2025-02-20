@@ -10,8 +10,8 @@ import json
 
 def main():
 
-    model = BYOL()
-    datamodule = WavMixtureModule(...)
+    model = BYOL(lr=0.0004)
+    datamodule = WavMixtureModule("/home/users/fgm/workspace/data/musdb18hq")
     logger = CSVLogger("./logs", "BYOL")
     cbks = [TQDMProgressBar(100)]
 
