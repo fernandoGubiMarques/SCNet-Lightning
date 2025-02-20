@@ -22,7 +22,7 @@ class SCNetLightning(LightningModule):
         super().__init__()
         self.backbone = SCNet_Backbone(**model_config)
         self.head = SCNet_Head(**model_config)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), **optim_config)
+        self.optimizer = torch.optim.Adam(self.parameters(), **optim_config)
 
         # Compute the window size in samples
         self.window_size = data_config["samplerate"] * data_config["segment"]
