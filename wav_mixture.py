@@ -14,10 +14,10 @@ class RandomPitchShift(nn.Module):
         self,
         activation_prob=0.5,
         sr=44100,
-        min_steps=-5,
-        max_steps=5,
-        bins_per_octave=48,
-        n_fft=2**12,
+        min_steps=-3,
+        max_steps=3,
+        bins_per_octave=24,
+        n_fft=2**9,
     ):
         super().__init__()
         self.min_steps = min_steps
@@ -28,30 +28,29 @@ class RandomPitchShift(nn.Module):
         self.activation_prob = activation_prob
 
     def forward(self, x):
-        die = torch.rand((1,)).item()
-        if die >= self.activation_prob:
-            return x
         with torch.no_grad():
             steps = torch.randint(self.min_steps, self.max_steps, (1,)).item()
             x = torchaudio.functional.pitch_shift(
                 x, self.sr, steps, self.bins_per_octave, self.n_fft
             )
-        return x
+            return x
 
 
-class WavTransform(Dataset):
+# class WavTransform(Dataset):
 
-    def __init__(self, path, metadata):
-        self.wavset = Wavset(path, metadata, ["mixture"], 11, 1, True)
+#     def __init__(self, path, metadata):
+#         self.wavset = 
 
-        self.transform = RandomPitchShift()
+#         self.transform = RandomPitchShift()
 
-    def __len__(self):
-        return len(self.wavset)
+#     def __len__(self):
+#         return len(self.wavset)
 
-    def __getitem__(self, index):
-        audio = self.wavset[index]
-        return self.transform(audio), self.transform(audio)
+#     def __getitem__(self, index):
+#         audio, _, _ = self.wavset[index]
+#         r1, r2 = self.transform(audio), self.transform(audio)
+
+#         return torch.squeeze(r1, 0), torch.squeeze(r2, 0)
 
 
 class WavMixtureModule(L.LightningDataModule):
@@ -86,7 +85,7 @@ class WavMixtureModule(L.LightningDataModule):
             train_metadata, _, _ = json.load(f)
 
         # Initialize datasets
-        self.train_set = WavTransform(train_path, train_metadata)
+        self.train_set = Wavset(train_path, train_metadata, ["mixture"], 11, 1, True)
 
     def train_dataloader(self):
         """
@@ -95,7 +94,7 @@ class WavMixtureModule(L.LightningDataModule):
         Returns:
             DataLoader: A PyTorch DataLoader for the training set.
         """
-        return DataLoader(self.train_set, 8, True, num_workers=15)
+        return DataLoader(self.train_set, batch_size=4, shuffle=True)
 
     # def val_dataloader(self):
     #     """

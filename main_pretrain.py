@@ -13,7 +13,7 @@ def main():
     model = BYOL(lr=0.0004)
     datamodule = WavMixtureModule("/home/users/fgm/workspace/data/musdb18hq")
     logger = CSVLogger("./logs", "BYOL")
-    cbks = [TQDMProgressBar(100)]
+    cbks = [TQDMProgressBar(1)]
 
     trainer = Trainer(
         accelerator="cuda",
@@ -26,7 +26,6 @@ def main():
         logger=logger,
         callbacks=cbks,
         log_every_n_steps=400,
-        val_check_interval=0.5,
     )
 
     trainer.fit(model, datamodule=datamodule)

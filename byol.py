@@ -4,6 +4,7 @@ import lightning as L
 from half_scnet import SCNet_Backbone
 from byol_heads import ProjectionHead, PredictionHead
 import einops
+from wav_mixture import RandomPitchShift
 
 
 class BYOL(L.LightningModule):
@@ -21,10 +22,21 @@ class BYOL(L.LightningModule):
         self.online_encoder = SCNet_Backbone(["blank"])
         self.online_projector = ProjectionHead()
         self.predictor = PredictionHead()
+        
+        self.augment = RandomPitchShift()
 
         # Target network (no predictor)
         self.target_encoder = SCNet_Backbone(["blank"])
         self.target_projector = ProjectionHead()
+
+        for param in self.target_encoder.parameters():
+            param.requires_grad = False
+        
+        for param in self.target_projector.parameters():
+            param.requires_grad = False
+
+        self.target_encoder.eval()
+        self.target_projector.eval()
 
         # Initialize target network with online network parameters
         self._initialize_target_network()
@@ -72,24 +84,25 @@ class BYOL(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         """Computes the BYOL loss and updates the target network."""
-        x1, x2 = batch  # Expecting two augmentations of the same image
+        batch = batch[0]
+        x1, x2 = self.augment(batch), self.augment(batch)  # Expecting two augmentations of the same image
 
         # Online network
         z1 = self.online_encoder(x1)
         z2 = self.online_encoder(x2)
 
-        z1 = torch.cat(
-            [einops.rearrange(z1[0], "... L -> L (...)")]
-            + [einops.rearrange(i, "... L -> L (...)") for i in z1[1]]
+        z1 = (
+            [einops.rearrange(z1[0], "B ... L -> B L (...)")]
+            + [einops.rearrange(i, "B ... L -> B L (...)") for i in z1[1]]
         )
 
-        z2 = torch.cat(
-            [einops.rearrange(z2[0], "... L -> L (...)")]
-            + [einops.rearrange(i, "... L -> L (...)") for i in z2[1]]
+        z2 = (
+            [einops.rearrange(z2[0], "B ... L -> B L (...)")]
+            + [einops.rearrange(i, "B ... L -> B L (...)") for i in z2[1]]
         )
 
-        z1 = self.online_projector(z1)
-        z2 = self.online_projector(z2)
+        z1 = self.online_projector(*z1)
+        z2 = self.online_projector(*z2)
 
         p1 = self.predictor(z1)
         p2 = self.predictor(z2)
@@ -99,18 +112,18 @@ class BYOL(L.LightningModule):
             t1 = self.target_encoder(x1)
             t2 = self.target_encoder(x2)
 
-            t1 = torch.cat(
-                [einops.rearrange(t1[0], "... L -> L (...)")]
-                + [einops.rearrange(i, "... L -> L (...)") for i in t1[1]]
+            t1 = (
+                [einops.rearrange(t1[0], "B ... L -> B L (...)")]
+                + [einops.rearrange(i, "B ... L -> B L (...)") for i in t1[1]]
             )
 
-            t2 = torch.cat(
-                [einops.rearrange(t2[0], "... L -> L (...)")]
-                + [einops.rearrange(i, "... L -> L (...)") for i in t2[1]]
+            t2 = (
+                [einops.rearrange(t2[0], "B ... L -> B L (...)")]
+                + [einops.rearrange(i, "B ... L -> B L (...)") for i in t2[1]]
             )
 
-            t1 = self.target_projector(t1)
-            t2 = self.target_projector(t2)
+            t1 = self.target_projector(*t1)
+            t2 = self.target_projector(*t2)
 
         # Compute BYOL loss (negative cosine similarity)
         loss = self.loss_fn(p1, t2) + self.loss_fn(p2, t1)
@@ -132,7 +145,8 @@ class BYOL(L.LightningModule):
         optimizer = torch.optim.AdamW(
             self.parameters(), lr=self.lr, weight_decay=self.weight_decay
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=200
-        )  # Adjust as needed
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        #     optimizer, T_max=200
+        # )  # Adjust as needed
+        # return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return optimizer
