@@ -78,9 +78,6 @@ class DualPathRNN(nn.Module):
         x = x + original_x
 
         return x
-    
-
-
 
 
 class SeparationNet(nn.Module):
@@ -111,5 +108,97 @@ class SeparationNet(nn.Module):
         return x
 
 
+class DualPathTransformer(nn.Module):
+    """
+    Dual-Path Transformer for speech separation.
+
+    Args:
+        d_model (int): The number of expected features in the input.
+        num_heads (int): Number of attention heads.
+        dim_feedforward (int): Hidden size in transformer feedforward layers.
+        num_layers (int): Number of transformer layers.
+    """
+
+    def __init__(self, d_model, num_heads, dim_feedforward, num_layers):
+        super(DualPathTransformer, self).__init__()
+
+        self.d_model = d_model
+        self.num_layers = num_layers
+
+        # Transformer layers for frequency and time paths
+        self.transformer_layers = nn.ModuleList(
+            [
+                nn.TransformerEncoder(
+                    nn.TransformerEncoderLayer(
+                        d_model, num_heads, dim_feedforward, dropout=0.1
+                    ),
+                    num_layers=num_layers,
+                )
+                for _ in range(2)
+            ]
+        )
+
+        self.linear_layers = nn.ModuleList(
+            [nn.Linear(d_model, d_model) for _ in range(2)]
+        )
+
+        self.norm_layers = nn.ModuleList([nn.GroupNorm(1, d_model) for _ in range(2)])
+
+    def forward(self, x):
+        B, C, F, T = x.shape
+        original_x = x
+
+        # Frequency-path
+        x = self.norm_layers[0](x)
+        x = x.permute(3, 0, 2, 1).contiguous().view(T, B * F, C)  # (T, B*F, C)
+        x = self.transformer_layers[0](
+            x
+        )  # Transformer operates on (seq_len, batch, features)
+        x = self.linear_layers[0](x)
+        x = x.view(T, B, F, C).permute(1, 3, 2, 0)  # (B, C, F, T)
+        x = x + original_x
+
+        original_x = x
+
+        # Time-path
+        x = self.norm_layers[1](x)
+        x = x.permute(2, 0, 1, 3).contiguous().view(F, B * T, C)  # (F, B*T, C)
+        x = self.transformer_layers[1](x)
+        x = self.linear_layers[1](x)
+        x = x.view(F, B, T, C).permute(1, 3, 0, 2)  # (B, C, F, T)
+        x = x + original_x
+
+        return x
 
 
+class SeparationTransformer(nn.Module):
+    """
+    Implements a simplified Sparse Down-sample block in an encoder architecture.
+
+    Args:
+    - channels (int): Number input channels.
+    - expand (int): Expansion factor used to calculate the hidden_size of LSTM.
+    - num_layers (int): Number of dual-path layers.
+    """
+
+    def __init__(self, channels, expand=1, num_layers=6):
+        super().__init__()
+
+        assert channels % 8 == 0
+
+        self.dp_modules = nn.ModuleList(
+            [
+                DualPathTransformer(channels * (2 if i % 2 else 1), 8, channels * 2, 2)
+                for i in range(num_layers)
+            ]
+        )
+
+        self.feat_conversion = nn.ModuleList([
+            FeatureConversion(channels * 2, inverse=(i % 2 != 0))
+            for i in range(num_layers)
+        ])
+
+    def forward(self, x):
+        for dp, feat_conv in zip(self.dp_modules, self.feat_conversion):
+            x = feat_conv(dp(x))
+        return x

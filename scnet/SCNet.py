@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
-from .separation import SeparationNet
+from .separation import SeparationTransformer
 import typing as tp
 import math
 
@@ -300,7 +300,7 @@ class SCNet(nn.Module):
         dims[0] *= len(sources)
         self.decoder = Decoder(dims, self.band_config)
 
-        self.separation_net = SeparationNet(
+        self.separation_net = SeparationTransformer(
             channels=dims[-1],
             expand=expand,
             num_layers=num_dplayer,
