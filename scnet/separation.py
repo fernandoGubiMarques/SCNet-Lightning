@@ -147,45 +147,51 @@ class DualPathTransformer(nn.Module):
         self.d_model = d_model
         self.num_layers = num_layers
 
-        # Transformer layers for frequency and time paths
-        self.transformer_layers = nn.ModuleList(
-            [
-                nn.TransformerEncoder(
-                    nn.TransformerEncoderLayer(
-                        d_model, num_heads, dim_feedforward, dropout=0.1
-                    ),
-                    num_layers=num_layers,
-                )
-                for _ in range(2)
-            ]
+        self.freq_transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model,
+                num_heads,
+                dim_feedforward,
+                dropout=0.1,
+            ),
+            num_layers=num_layers,
         )
 
-        self.linear_layers = nn.ModuleList(
-            [nn.Linear(d_model, d_model) for _ in range(2)]
+        self.time_transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model,
+                num_heads,
+                dim_feedforward,
+                dropout=0.1,
+            ),
+            num_layers=num_layers,
         )
 
-        self.norm_layers = nn.ModuleList([nn.GroupNorm(1, d_model) for _ in range(2)])
+        self.freq_linear = nn.Linear(d_model, d_model)
+        self.time_linear = nn.Linear(d_model, d_model)
+        self.freq_norm = nn.GroupNorm(1, d_model)
+        self.time_norm = nn.GroupNorm(1, d_model)
 
     def forward(self, x):
         B, C, F, T = x.shape
         original_x = x
 
         # Frequency-path
-        x = self.norm_layers[0](x)
+        x = self.freq_norm(x)
         # Transformer operates on (seq_len, batch, features)
         x = einops.rearrange(x, "B C F T -> T (B F) C")
-        x = self.transformer_layers[0](x)
-        x = self.linear_layers[0](x)
+        x = self.freq_transformer(x)
+        x = self.freq_linear(x)
         x = einops.rearrange(x, "T (B F) C -> B C F T", B=B, F=F)
         x = x + original_x
 
         original_x = x
 
         # Time-path
-        x = self.norm_layers[1](x)
+        x = self.time_norm(x)
         x = einops.rearrange(x, "B C F T -> F (B T) C")
-        x = self.transformer_layers[1](x)
-        x = self.linear_layers[1](x)
+        x = self.time_transformer(x)
+        x = self.time_linear(x)
         x = einops.rearrange(x, "F (B T) C -> B C F T", B=B, T=T)
         x = x + original_x
 
