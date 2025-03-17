@@ -1,10 +1,10 @@
 import torch
 from scnet_module import SCNetLightning
+from byol import BYOL
 from wav_module import WavModule
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import CSVLogger
-from lightning.pytorch.tuner import Tuner
 from pathlib import Path
 from omegaconf import OmegaConf
 from argparse import ArgumentParser
@@ -15,6 +15,8 @@ def main():
 
     parser = ArgumentParser()
     parser.add_argument("--config", "-c", type=str, default="config/default.yaml")
+    parser.add_argument("--pretrain", "-p", type=Path)
+    parser.add_argument("--freeze", "-f", action='store_true')
     args = parser.parse_args()
 
     config = OmegaConf.load(args.config)
@@ -29,12 +31,25 @@ def main():
         config.train
     )
 
+    pretrained = BYOL.load_from_checkpoint(args.pretrain)
+    model.backbone.load_state_dict(pretrained.online_encoder.state_dict())
+
+    if args.freeze:
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+
     datamodule = WavModule(config.data, config.loader)
 
-    logger = CSVLogger("./logs", "SCNet")
+    logger = CSVLogger("./logs", "SCNet_FT")
     log_dir = Path(logger.log_dir)
 
-    logger.log_hyperparams(config)
+    logger.log_hyperparams(
+        {
+            **config,
+            "pretrain": str(args.pretrain),
+            "freeze": str(args.freeze)
+        }
+    )
 
     cbks = [
         ModelCheckpoint(
@@ -42,7 +57,7 @@ def main():
             "checkpoints/{step}-" + stem,
             "val_nsdr_" + stem,
             mode="max",
-            save_top_k=1,
+            save_top_k=3,
         )
         for stem in config.data.sources
     ]
@@ -53,7 +68,7 @@ def main():
             filename="checkpoints/{step}-nsdr",
             monitor="val_nsdr",
             mode="max",
-            save_top_k=1,
+            save_top_k=3,
         )
     )
 
@@ -61,38 +76,24 @@ def main():
 
     trainer = Trainer(
         accelerator="cuda",
-        devices=torch.cuda.device_count(),  # Use all available GPUs
-        strategy="ddp_find_unused_parameters_true",  # Enable Distributed Data Parallel (DDP)
-        num_nodes=1,  # Adjust based on available nodes
-        sync_batchnorm=True,  # Synchronize batch norms across GPUs
+        # devices=torch.cuda.device_count(),  # Use all available GPUs
+        # strategy="ddp",  # Enable Distributed Data Parallel (DDP)
+        # num_nodes=2,  # Adjust based on available nodes
+        # sync_batchnorm=True,  # Synchronize batch norms across GPUs
         precision="16-mixed",
         max_epochs=130,
         logger=logger,
         callbacks=cbks,
         log_every_n_steps=400,
-        # val_check_interval=0.5,
+        val_check_interval=0.5,
     )
-
-    tuner = Tuner(trainer)
-    lr_finder = tuner.lr_find(model)
-    print(lr_finder.results)
-    new_lr = lr_finder.suggestion()
-
-    print(new_lr)
 
     trainer.fit(model, datamodule=datamodule)
-
-    trainer = Trainer(
-        accelerator="cuda",
-        devices=1,
-        num_nodes=1,
-        precision="16-mixed",
-    )
 
     test_metrics = [
         {
             "model": str(ckpt_file),
-            **(trainer.test(model, datamodule=datamodule, ckpt_path=ckpt_file)[0]),
+            **(trainer.test(datamodule=datamodule, ckpt_path=ckpt_file)[0]),
         }
         for ckpt_file in log_dir.glob("checkpoints/*.ckpt")
     ]

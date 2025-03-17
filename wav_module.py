@@ -89,7 +89,7 @@ class WavModule(L.LightningDataModule):
         Returns:
             DataLoader: A PyTorch DataLoader for the training set.
         """
-        return DataLoader(self.train_set, **(self.loader_config["train"]))
+        return DataLoader(self.train_set, **(self.loader_config["train"]), drop_last=True)
 
     def val_dataloader(self):
         """

@@ -22,7 +22,7 @@ class SCNetLightning(LightningModule):
         super().__init__()
         self.backbone = SCNet_Backbone(**model_config)
         self.head = SCNet_Head(**model_config)
-        self.optimizer = torch.optim.Adam(self.parameters(), **optim_config)
+        self.lr = optim_config['lr']
 
         # Compute the window size in samples
         self.window_size = data_config["samplerate"] * data_config["segment"]
@@ -65,7 +65,7 @@ class SCNetLightning(LightningModule):
 
     def configure_optimizers(self):
         """Returns the optimizer for training."""
-        return self.optimizer
+        return torch.optim.Adam(self.parameters(), self.lr)
 
     def training_step(self, batch, batch_idx):
         """Single training step where the model learns from a batch."""
@@ -242,3 +242,6 @@ class SCNetLightning(LightningModule):
             total_nsdr += nsdr
         mean_nsdr = total_nsdr / len(self.model_config["sources"])
         self.log("test_nsdr", mean_nsdr, prog_bar=True, logger=True, sync_dist=True)
+
+    def train_dataloader(self):
+        return super().train_dataloader()
