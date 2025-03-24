@@ -4,7 +4,6 @@ from wav_module import WavModule
 from lightning import Trainer
 from lightning.pytorch.callbacks import ModelCheckpoint, TQDMProgressBar
 from lightning.pytorch.loggers import CSVLogger
-from lightning.pytorch.tuner import Tuner
 from pathlib import Path
 from omegaconf import OmegaConf
 from argparse import ArgumentParser
@@ -62,7 +61,7 @@ def main():
     trainer = Trainer(
         accelerator="cuda",
         devices=torch.cuda.device_count(),  # Use all available GPUs
-        strategy="ddp_find_unused_parameters_true",  # Enable Distributed Data Parallel (DDP)
+        strategy="ddp",  # Enable Distributed Data Parallel (DDP)
         num_nodes=1,  # Adjust based on available nodes
         sync_batchnorm=True,  # Synchronize batch norms across GPUs
         precision="16-mixed",
@@ -72,13 +71,6 @@ def main():
         log_every_n_steps=400,
         # val_check_interval=0.5,
     )
-
-    tuner = Tuner(trainer)
-    lr_finder = tuner.lr_find(model)
-    print(lr_finder.results)
-    new_lr = lr_finder.suggestion()
-
-    print(new_lr)
 
     trainer.fit(model, datamodule=datamodule)
 

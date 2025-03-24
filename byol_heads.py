@@ -23,8 +23,8 @@ class PredictionHead(nn.Sequential):
 
     def __init__(self):
         layers = [
-            nn.Linear(200, 20, bias=False),
+            nn.Linear(200, 400, bias=False),
             nn.ReLU(),
-            nn.Linear(20, 200, bias=False),
+            nn.Linear(400, 200, bias=False),
         ]
         super().__init__(*layers)

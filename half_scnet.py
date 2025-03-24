@@ -115,17 +115,10 @@ class SCNet_Head(nn.Module):
         }
 
         self.dims = dims.copy()
-        self.encoder = Encoder(dims, self.band_config, self.conv_config, conv_depths)
         dims[0] *= len(sources)
         self.decoder = Decoder(dims, self.band_config)
 
-        self.separation_net = SeparationNet(
-            channels=dims[-1],
-            expand=expand,
-            num_layers=num_dplayer,
-        )
-
-    def forward(self, x):
+    def forward(self, x: torch.Tensor):
         x, skips, lengths, original_lengths, B, Fr, T, std, mean, padding = x
         x = self.decoder(x, skips, lengths, original_lengths)
 

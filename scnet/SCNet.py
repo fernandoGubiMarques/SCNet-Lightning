@@ -271,7 +271,7 @@ class SCNet(nn.Module):
         sources=["drums", "bass", "other", "vocals"],
         audio_channels=2,
         dims: list[int] = [4, 32, 64, 128],
-        stft_config=dict(nfft=4096, hop_length=1024, win_size=4096, normalized=True),
+        stft_config=dict(n_fft=4096, hop_length=1024, win_length=4096, normalized=True),
         band_config=None,
         conv_depths=[3, 2, 1],
         conv_config=dict(compress=4, kernel=3),
