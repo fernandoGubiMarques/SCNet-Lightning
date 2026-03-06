@@ -10,7 +10,8 @@ and the original model description in [this paper](https://arxiv.org/abs/2401.13
 
 
 ### Experimental Results
-While I was unable to reach the same metrics as the original paper, they're still pretty good
+While I was unable to reach the same metrics as the original paper, they're still pretty good.
+The experiments were with the MUSDB18-HQ dataset, using the recommended partitions.
 
 |             | **SDR** |
 |-------------|---------|
