@@ -62,6 +62,70 @@ class SCNetLightning(LightningModule):
         """Forward pass through the SCNet model."""
         return self.model(mix)
 
+    def waveform_forward(self, mix: Tensor) -> Tensor:
+        mix, padding = self.ensure_even_frames(mix)
+        mix = self.stft(mix)
+        sources = self.forward(mix)
+        sources = self.istft(sources)
+        sources = sources[..., :-padding]
+        return sources
+
+    def ensure_even_frames(self, x: Tensor) -> tuple[Tensor, int]:
+        """
+        Pads audio tensor (..., L) to ensure that the number of frames after the STFT
+        (the length of the last dimension in the frequency domain) is even,
+        so that the RFFT operation can be used in the separation network.
+
+        Returns padded tensor and padding size
+        """
+        hop_length = self.stft_config["hop_length"]
+        L = x.shape[-1]
+        padding = hop_length - L % hop_length
+        if (L + padding) // hop_length % 2 == 0:
+            padding += hop_length
+
+        return F.pad(x, (0, padding)), padding
+
+    def stft(self, x: Tensor) -> Tensor:
+        """
+        Performs batched stft with complex as channels for a tensor of shape (..., C, L).
+
+        Returns spectrogram of shape (..., C * 2, Fr, T)
+        """
+        batch_shape = x.shape[:-2]
+        C = x.shape[-2]
+
+        x = einops.rearrange(x, "... C L -> (... C) L")
+        y = torch.stft(x, **self.stft_config, return_complex=True)
+
+        y = torch.view_as_real(y)
+        y = einops.rearrange(y, "(B C) Fr T K -> B (C K) Fr T", C=C)
+
+        # Split B into batch_shape
+        y = y.view(*batch_shape, *y.shape[1:])
+
+        return y.contiguous()
+
+    def istft(self, y: Tensor) -> Tensor:
+        """
+        Inverse STFT for a tensor of shape (..., C * 2, Fr, T).
+
+        Returns a signal of shape (..., C, L)
+        """
+        batch_shape = y.shape[:-3]
+        C_total = y.shape[-3]
+        C = C_total // 2
+
+        dtype = y.dtype
+
+        y = einops.rearrange(y, "... (C K) Fr T -> (... C) Fr T K", K=2)
+        y = torch.view_as_complex(y.contiguous().half())
+
+        x: Tensor = torch.istft(y, **self.stft_config)
+        x = x.to(dtype=dtype)
+        x = x.reshape(*batch_shape, C, -1)
+        return x
+
     def configure_optimizers(self):
         """Returns the optimizer for training."""
         return self.optimizer
@@ -71,54 +135,29 @@ class SCNetLightning(LightningModule):
         batch, _, _ = batch
         sources = batch.to(self.device)
         sources = self.augment(sources)  # Apply augmentations
+
+        sources, padding = self.ensure_even_frames(sources)
         mix = sources.sum(dim=1)  # Create mixture by summing sources
 
+        with torch.no_grad():
+            sources = self.stft(sources)
+
         estimate = self(mix)  # Forward pass
-        assert estimate.shape == sources.shape, f"{estimate.shape=}, {sources.shape=}"
 
         loss = self.spec_rmse_loss(estimate, sources)  # Compute loss
         self.log("train_loss", loss, prog_bar=True, logger=True)  # Log loss
 
         return loss
 
-    def spec_rmse_loss(self, estimates: Tensor, sources: Tensor):
-        """
-        Compute the RMSE loss in the spectrogram domain for each signal separately
-        and allow weighting of different signals.
+    def spec_rmse_loss(self, estimate: Tensor, sources: Tensor) -> Tensor:
+        estimate = einops.rearrange(estimate, "B S CK Fr T -> S B (CK Fr T)")
+        sources = einops.rearrange(sources, "B S CK Fr T -> S B (CK Fr T)")
+        loss: Tensor = 0  # type: ignore
 
-        Args:
-            estimates (torch.Tensor): Estimated audio signals of shape (batch, signal, channel, time).
-            sources (torch.Tensor): Ground truth audio signals of the same shape.
-
-        Returns:
-            torch.Tensor: RMSE loss.
-        """
-        B, S, C, T = estimates.shape
-
-        estimates = einops.rearrange(estimates, "B S C T -> S (B C) T")
-        sources = einops.rearrange(sources, "B S C T -> S (B C) T")
-
-        loss = 0
-
-        for weight, estimate, source in zip(self.loss_weights, estimates, sources):
-            # estimate and source have shape (B*C, T)
-            
-            estimate = torch.stft(estimate, **self.stft_config, return_complex=True)
-            source = torch.stft(source, **self.stft_config, return_complex=True)
-            # (B*C, f, t), t is not T
-
-            estimate = torch.view_as_real(estimate)
-            source = torch.view_as_real(source)
-            # (B*C, f, t, 2)
-
-            estimate = einops.rearrange(estimate, "(B C) f t c -> B (C f t c)", B=B, C=C)
-            source = einops.rearrange(source, "(B C) f t c -> B (C f t c)", B=B, C=C)
-
-            signal_loss = F.mse_loss(estimate, source, reduction="none")
-            # (B, C*f*t*2)
-
+        for est, src in zip(estimate, sources):
+            signal_loss = F.mse_loss(est, src, reduction="none")
             signal_loss = signal_loss.mean(1).sqrt().mean(0)
-            loss += weight * signal_loss
+            loss += signal_loss
 
         return loss
 
@@ -150,7 +189,8 @@ class SCNetLightning(LightningModule):
         # Forward pass in parallel for all windows. Determine processing strategy based
         # on max_win_chunks
         if self.inference_config.max_parallel_windows is None:
-            y_windows = self.forward(x_windows)  # Process all windows in parallel
+            y_windows = self.waveform_forward(x_windows)
+            # Process all windows in parallel
         else:
             y_windows = torch.zeros(
                 (len(window_starts), n_sources, 2, self.window_size), device=x.device
@@ -161,7 +201,7 @@ class SCNetLightning(LightningModule):
                 batch_x = x_windows[
                     i : i + self.inference_config.max_parallel_windows
                 ]  # Select a batch of windows
-                batch_y = self.forward(batch_x)  # Forward pass
+                batch_y = self.waveform_forward(batch_x)  # Forward pass
                 y_windows[i : i + batch_y.shape[0]] = batch_y
 
         # Prepare output tensor (n_sources, 2, T_padded) with zeros for accumulation
