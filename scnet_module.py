@@ -150,16 +150,10 @@ class SCNetLightning(LightningModule):
         return loss
 
     def spec_rmse_loss(self, estimate: Tensor, sources: Tensor) -> Tensor:
-        estimate = einops.rearrange(estimate, "B S CK Fr T -> S B (CK Fr T)")
-        sources = einops.rearrange(sources, "B S CK Fr T -> S B (CK Fr T)")
-        loss: Tensor = 0  # type: ignore
-
-        for est, src in zip(estimate, sources):
-            signal_loss = F.mse_loss(est, src, reduction="none")
-            signal_loss = signal_loss.mean(1).sqrt().mean(0)
-            loss += signal_loss
-
-        return loss
+        # estimate, tensor: (B, S, CK, Fr, T)
+        mse = torch.mean((estimate - sources) ** 2, dim=(2, 3, 4))
+        rmse = torch.sqrt(mse)
+        return rmse.mean(dim=0).sum()
 
     @torch.no_grad
     def apply_model(self, x: Tensor):
